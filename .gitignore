@@ -38,9 +38,12 @@ Thumbs.db
 /logs/
 /zkdata/
 
-# ZooKeeper binary distribution (keep local only; use README / Docker otherwise)
-/apache-zookeeper-*-bin/
-
+# ZooKeeper 发行版：只保留 conf/（如 zoo.cfg 示例），其余 bin/lib/docs 等不入库。
+# 注意：不能写 /apache-zookeeper-*-bin/ 整目录忽略后再 !conf，父目录被忽略时子路径无法被重新包含。
+/apache-zookeeper-*-bin/*
+!/apache-zookeeper-*-bin/conf/
+!/apache-zookeeper-*-bin/conf/**
+/apache-zookeeper*.tar.gz
 # MiniSQL C++ build tree (also see minisql/.gitignore)
 minisql/build/
 minisql/cmake-build-*/
