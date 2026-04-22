@@ -1,0 +1,11 @@
+com/minisql/coordinator/meta/MetadataManager.class
+com/minisql/coordinator/zk/CoordinatorZkManager.class
+com/minisql/coordinator/router/ResultMerger$JoinResult.class
+com/minisql/coordinator/handler/ClientHandler.class
+com/minisql/coordinator/router/ResultMerger.class
+com/minisql/coordinator/meta/ClusterManager.class
+com/minisql/coordinator/shard/ShardingStrategy.class
+com/minisql/coordinator/CoordinatorConfig.class
+com/minisql/coordinator/router/SqlRouter.class
+com/minisql/coordinator/CoordinatorServer.class
+com/minisql/coordinator/CoordinatorMain.class

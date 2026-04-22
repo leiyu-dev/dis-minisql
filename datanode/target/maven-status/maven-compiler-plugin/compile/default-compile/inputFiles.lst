@@ -1,0 +1,9 @@
+/home/ly527609/homework/dis-minisql/datanode/src/main/java/com/minisql/datanode/replica/ReplicaClient.java
+/home/ly527609/homework/dis-minisql/datanode/src/main/java/com/minisql/datanode/DataNodeServer.java
+/home/ly527609/homework/dis-minisql/datanode/src/main/java/com/minisql/datanode/DataNodeMain.java
+/home/ly527609/homework/dis-minisql/datanode/src/main/java/com/minisql/datanode/zk/DataNodeZkManager.java
+/home/ly527609/homework/dis-minisql/datanode/src/main/java/com/minisql/datanode/DataNodeConfig.java
+/home/ly527609/homework/dis-minisql/datanode/src/main/java/com/minisql/datanode/handler/RequestHandler.java
+/home/ly527609/homework/dis-minisql/datanode/src/main/java/com/minisql/datanode/executor/MinisqlProcess.java
+/home/ly527609/homework/dis-minisql/datanode/src/main/java/com/minisql/datanode/replica/ReplicaManager.java
+/home/ly527609/homework/dis-minisql/datanode/src/main/java/com/minisql/datanode/executor/SqlExecutor.java
