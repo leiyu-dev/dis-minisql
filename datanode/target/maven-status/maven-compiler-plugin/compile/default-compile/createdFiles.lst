@@ -1,9 +1,0 @@
-com/minisql/datanode/executor/MinisqlProcess.class
-com/minisql/datanode/replica/ReplicaManager.class
-com/minisql/datanode/DataNodeConfig.class
-com/minisql/datanode/zk/DataNodeZkManager.class
-com/minisql/datanode/replica/ReplicaClient.class
-com/minisql/datanode/DataNodeServer.class
-com/minisql/datanode/executor/SqlExecutor.class
-com/minisql/datanode/DataNodeMain.class
-com/minisql/datanode/handler/RequestHandler.class
