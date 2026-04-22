@@ -37,8 +37,13 @@ public final class MinisqlOutputParser {
         boolean hasQueryOk = trimmed.contains("Query OK");
         boolean hasRowSet = trimmed.contains("row in set") || trimmed.contains("rows in set");
         boolean hasEmptySet = trimmed.contains("Empty set");
+        // Successful USE db — minisql prints this without "Query OK" or a result table
+        boolean hasDatabaseChanged = trimmed.contains("Database changed");
+        // DDL success lines, e.g. "Successfully create table", "Successfully drop table"
+        boolean hasSuccessfully = trimmed.startsWith("Successfully");
 
-        if (!hasTable && !hasQueryOk && !hasRowSet && !hasEmptySet) {
+        if (!hasTable && !hasQueryOk && !hasRowSet && !hasEmptySet && !hasDatabaseChanged
+                && !hasSuccessfully) {
             // Treat as error / informational message
             result.setSuccess(false);
             result.setErrorMessage(trimmed);

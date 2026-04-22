@@ -32,3 +32,24 @@ Thumbs.db
 *.tmp
 *.swp
 *~
+
+# ---- dis-minisql runtime (DataNode / ZK / scripts) ----
+/data/
+/logs/
+/zkdata/
+
+# ZooKeeper binary distribution (keep local only; use README / Docker otherwise)
+/apache-zookeeper-*-bin/
+
+# MiniSQL C++ build tree (also see minisql/.gitignore)
+minisql/build/
+minisql/cmake-build-*/
+
+# JVM crash / heap dumps
+hs_err_pid*.log
+replay_pid*.log
+*.hprof
+
+# Core dumps (minisql segfault etc.)
+core
+core.*
