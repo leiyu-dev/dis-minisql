@@ -18,6 +18,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -32,7 +33,7 @@ public class DataNodeServer {
     private final WalLog walLog;
     private final SnapshotManager snapshotManager;
     private final MiniSqlCli miniSql;
-    private final Set<Integer> shards;
+    private final Set<Integer> shards = new HashSet<>();
     private volatile String replicaState = "RECOVERING";
     private SnapshotManifest snapshotManifest;
 
@@ -41,11 +42,12 @@ public class DataNodeServer {
         this.nodeConfig = clusterConfig.requireNode(nodeId);
         this.metadataStore = new ZkMetadataStore(clusterConfig);
         this.metadataStore.initializeShards(clusterConfig);
-        this.shards = metadataStore.shardsForNode(nodeId);
+        this.shards.addAll(metadataStore.shardsForNode(nodeId));
         Path dataDir = Path.of(nodeConfig.dataDir == null ? "data/" + nodeId : nodeConfig.dataDir);
         this.walLog = new WalLog(dataDir);
         this.snapshotManager = new SnapshotManager(dataDir);
-        this.miniSql = new MiniSqlCli(Path.of(clusterConfig.minisqlBinary), dataDir, Duration.ofSeconds(30));
+        this.miniSql = new MiniSqlCli(Path.of(clusterConfig.minisqlBinary), dataDir, Duration.ofSeconds(30),
+                clusterConfig.defaultDatabase);
     }
 
     public void start() throws IOException {
@@ -69,6 +71,25 @@ public class DataNodeServer {
         });
         server.createContext("/wal", exchange -> HttpUtil.json(exchange, 200, walLog.readAll()));
         server.createContext("/health", exchange -> HttpUtil.json(exchange, 200, currentNodeInfo()));
+        server.createContext("/admin/refresh-shards", exchange -> {
+            replicaState = "RECOVERING";
+            register();
+            refreshShards();
+            recoverFromPeers();
+            applyPendingWal();
+            replicaState = "SERVING";
+            register();
+            HttpUtil.json(exchange, 200, currentNodeInfo());
+        });
+        server.createContext("/admin/snapshot", exchange -> {
+            List<String> appliedSql = new java.util.ArrayList<>(snapshotManager.snapshotSql());
+            walLog.readAll().stream()
+                    .map(entry -> entry.sql)
+                    .forEach(appliedSql::add);
+            snapshotManifest = snapshotManager.createSnapshot(walLog.lastSequence(), currentShardLogIndexes(), appliedSql);
+            walLog.compactThrough(walLog.lastSequence());
+            HttpUtil.json(exchange, 200, snapshotManifest);
+        });
         server.setExecutor(Executors.newFixedThreadPool(8));
         server.start();
         System.out.printf("DataNode %s serving %s shards %s at %s:%d%n",
@@ -82,6 +103,9 @@ public class DataNodeServer {
             if (!ownsShard(request.shardId)) {
                 return ExecuteResponse.error(nodeConfig.nodeId, "node does not own shard " + request.shardId);
             }
+            if (request.shardId >= 0 && request.raftTerm < metadataStore.shard(request.shardId).term) {
+                return ExecuteResponse.error(nodeConfig.nodeId, "stale raft term " + request.raftTerm);
+            }
             written = walLog.append(request.requestId, request.shardId, request.shardLogIndex, sql);
             metadataStore.updateNode(currentNodeInfo());
         } else if (request.replay && walLog.containsRequestId(request.requestId)) {
@@ -92,7 +116,8 @@ public class DataNodeServer {
         }
 
         long sequence = written == null ? walLog.lastSequence() : written.sequence;
-        String output = miniSql.execute(List.of(), sql);
+        List<String> replay = replaySqlBefore(written == null ? Long.MAX_VALUE : written.sequence);
+        String output = miniSql.execute(replay, sql);
         if (written != null) {
             snapshotManifest = snapshotManager.markApplied(snapshotManifest, sequence, currentShardLogIndexes());
         }
@@ -100,6 +125,7 @@ public class DataNodeServer {
         metadataStore.updateNode(currentNodeInfo());
         ExecuteResponse response = ExecuteResponse.ok(nodeConfig.nodeId, sequence, output);
         response.shardLogIndex = written == null ? request.shardLogIndex : written.shardLogIndex;
+        response.raftTerm = request.raftTerm;
         return response;
     }
 
@@ -126,13 +152,25 @@ public class DataNodeServer {
     }
 
     private void applyPendingWal() {
-        List<String> pendingSql = walLog.pendingAfter(snapshotManifest.lastWalSequence).stream()
+        List<String> pendingSql = walLog.pendingAfter(snapshotManifest.lastCompactedWalSequence).stream()
                 .map(entry -> entry.sql)
                 .collect(Collectors.toList());
         if (!pendingSql.isEmpty()) {
-            miniSql.execute(pendingSql, null);
+            List<String> replay = new java.util.ArrayList<>(snapshotManager.snapshotSql());
+            replay.addAll(pendingSql);
+            miniSql.execute(replay, null);
             snapshotManifest = snapshotManager.markApplied(snapshotManifest, walLog.lastSequence(), currentShardLogIndexes());
         }
+    }
+
+    private List<String> replaySqlBefore(long sequenceExclusive) {
+        List<String> replay = new java.util.ArrayList<>(snapshotManager.snapshotSql());
+        walLog.readAll().stream()
+                .filter(entry -> entry.sequence > snapshotManifest.lastCompactedWalSequence)
+                .filter(entry -> entry.sequence < sequenceExclusive)
+                .map(entry -> entry.sql)
+                .forEach(replay::add);
+        return replay;
     }
 
     private void maybeSnapshot() {
@@ -140,12 +178,22 @@ public class DataNodeServer {
         if (snapshotManifest != null && compactThrough - snapshotManifest.lastCompactedWalSequence < 20) {
             return;
         }
-        snapshotManifest = snapshotManager.createSnapshot(compactThrough, currentShardLogIndexes());
+        List<String> appliedSql = new java.util.ArrayList<>(snapshotManager.snapshotSql());
+        walLog.readAll().stream()
+                .filter(entry -> entry.sequence <= compactThrough)
+                .map(entry -> entry.sql)
+                .forEach(appliedSql::add);
+        snapshotManifest = snapshotManager.createSnapshot(compactThrough, currentShardLogIndexes(), appliedSql);
         walLog.compactThrough(compactThrough);
     }
 
     private void register() {
         metadataStore.registerNode(currentNodeInfo());
+    }
+
+    private void refreshShards() {
+        shards.clear();
+        shards.addAll(metadataStore.shardsForNode(nodeConfig.nodeId));
     }
 
     private NodeInfo currentNodeInfo() {

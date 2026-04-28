@@ -7,6 +7,8 @@ public class ShardMetadata {
     public int shardId;
     public List<String> replicas = new ArrayList<>();
     public String primary;
+    public long term;
+    public long commitIndex;
 
     public ShardMetadata() {
     }
@@ -15,5 +17,7 @@ public class ShardMetadata {
         this.shardId = shardId;
         this.replicas = replicas;
         this.primary = primary;
+        this.term = 1;
+        this.commitIndex = 0;
     }
 }

@@ -5,6 +5,7 @@ public class ExecuteResponse {
     public String nodeId;
     public long walSequence;
     public long shardLogIndex;
+    public long raftTerm;
     public String output;
     public String error;
 

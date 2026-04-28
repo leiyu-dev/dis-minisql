@@ -6,18 +6,23 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Comparator;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 public class SnapshotManager {
     private final Path dataDir;
     private final Path manifestFile;
     private final Path snapshotDir;
+    private final Path snapshotSqlFile;
 
     public SnapshotManager(Path dataDir) {
         this.dataDir = dataDir.toAbsolutePath().normalize();
         this.manifestFile = this.dataDir.resolve("snapshot.json");
         this.snapshotDir = this.dataDir.resolve("snapshots").resolve("current");
+        this.snapshotSqlFile = snapshotDir.resolve("snapshot.sql");
     }
 
     public SnapshotManifest loadManifest() {
@@ -43,7 +48,8 @@ public class SnapshotManager {
         copyDirectory(snapshotDatabases, databases);
     }
 
-    public SnapshotManifest createSnapshot(long lastWalSequence, Map<Integer, Long> shardLogIndexes) {
+    public SnapshotManifest createSnapshot(long lastWalSequence, Map<Integer, Long> shardLogIndexes,
+                                           List<String> appliedSql) {
         try {
             Files.createDirectories(snapshotDir);
             Path databases = dataDir.resolve("databases");
@@ -57,10 +63,24 @@ public class SnapshotManager {
             manifest.lastCompactedWalSequence = lastWalSequence;
             manifest.createdAtMillis = System.currentTimeMillis();
             manifest.shardLogIndexes.putAll(shardLogIndexes);
+            Files.write(snapshotSqlFile, appliedSql, StandardCharsets.UTF_8);
             saveManifest(manifest);
             return manifest;
         } catch (IOException e) {
             throw new IllegalStateException("Failed to create snapshot", e);
+        }
+    }
+
+    public List<String> snapshotSql() {
+        if (!Files.exists(snapshotSqlFile)) {
+            return List.of();
+        }
+        try {
+            return Files.readAllLines(snapshotSqlFile, StandardCharsets.UTF_8).stream()
+                    .filter(line -> !line.isBlank())
+                    .collect(Collectors.toList());
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to read snapshot SQL", e);
         }
     }
 

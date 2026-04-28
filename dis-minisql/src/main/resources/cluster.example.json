@@ -4,6 +4,7 @@
   "sessionTimeoutMs": 15000,
   "shardCount": 3,
   "replicationFactor": 2,
+  "defaultDatabase": "dist",
   "coordinatorHost": "0.0.0.0",
   "coordinatorPort": 8080,
   "minisqlBinary": "../minisql/build/bin/main",

@@ -56,7 +56,7 @@ public class ZkMetadataStore implements Closeable {
                 replicas.add(nodeIds.get((shardId + replica) % nodeIds.size()));
             }
             ShardMetadata metadata = new ShardMetadata(shardId, replicas, replicas.get(0));
-            upsertPersistent(paths.shard(shardId), Jsons.bytes(metadata));
+            upsertPersistentIfAbsent(paths.shard(shardId), Jsons.bytes(metadata));
             upsertPersistentIfAbsent(paths.shardLogIndex(shardId), "0".getBytes(java.nio.charset.StandardCharsets.UTF_8));
         }
     }
@@ -126,6 +126,70 @@ public class ZkMetadataStore implements Closeable {
             return Jsons.parse(data, ShardMetadata.class);
         } catch (Exception e) {
             throw new IllegalStateException("Failed to read shard " + shardId, e);
+        }
+    }
+
+    public void updateShard(ShardMetadata metadata) {
+        upsertPersistent(paths.shard(metadata.shardId), Jsons.bytes(metadata));
+    }
+
+    public ShardMetadata electPrimary(int shardId, List<NodeInfo> liveNodes) {
+        ShardMetadata metadata = shard(shardId);
+        Set<String> liveServing = liveNodes.stream()
+                .filter(node -> "SERVING".equalsIgnoreCase(node.replicaState))
+                .map(node -> node.nodeId)
+                .collect(Collectors.toSet());
+        if (metadata.primary != null && liveServing.contains(metadata.primary)) {
+            return metadata;
+        }
+        for (String replica : metadata.replicas) {
+            if (liveServing.contains(replica)) {
+                metadata.primary = replica;
+                metadata.term++;
+                updateShard(metadata);
+                return metadata;
+            }
+        }
+        return metadata;
+    }
+
+    public List<ShardMetadata> rebalance(List<NodeInfo> liveNodes, int replicationFactor) {
+        List<String> liveIds = liveNodes.stream()
+                .filter(node -> "SERVING".equalsIgnoreCase(node.replicaState)
+                        || "RECOVERING".equalsIgnoreCase(node.replicaState))
+                .map(node -> node.nodeId)
+                .sorted()
+                .collect(Collectors.toList());
+        if (liveIds.isEmpty()) {
+            return shards();
+        }
+        List<ShardMetadata> updated = new ArrayList<>();
+        for (ShardMetadata shard : shards()) {
+            List<String> replicas = new ArrayList<>();
+            int replicaTarget = Math.min(replicationFactor, liveIds.size());
+            for (int replica = 0; replica < replicaTarget; replica++) {
+                replicas.add(liveIds.get((shard.shardId + replica) % liveIds.size()));
+            }
+            replicas.sort(String::compareTo);
+            boolean changed = !replicas.equals(shard.replicas);
+            shard.replicas = replicas;
+            if (shard.primary == null || !replicas.contains(shard.primary)) {
+                shard.primary = replicas.get(0);
+                shard.term++;
+            } else if (changed) {
+                shard.term++;
+            }
+            updateShard(shard);
+            updated.add(shard);
+        }
+        return updated;
+    }
+
+    public void updateCommitIndex(int shardId, long commitIndex) {
+        ShardMetadata metadata = shard(shardId);
+        if (commitIndex > metadata.commitIndex) {
+            metadata.commitIndex = commitIndex;
+            updateShard(metadata);
         }
     }
 

@@ -2,7 +2,9 @@ package edu.minisql.distributed.coordinator;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 public class MiniSqlResultParser {
@@ -31,6 +33,7 @@ public class MiniSqlResultParser {
 
     public QueryTable merge(List<QueryTable> tables) {
         QueryTable merged = new QueryTable();
+        Set<String> seenRows = new LinkedHashSet<>();
         for (QueryTable table : tables) {
             if (table.isEmpty()) {
                 continue;
@@ -39,7 +42,12 @@ public class MiniSqlResultParser {
                 merged.columns.addAll(table.columns);
             }
             if (sameColumns(merged.columns, table.columns)) {
-                merged.rows.addAll(table.rows);
+                for (List<String> row : table.rows) {
+                    String key = String.join("\u001f", row);
+                    if (seenRows.add(key)) {
+                        merged.rows.add(row);
+                    }
+                }
             }
         }
         return merged;

@@ -17,8 +17,10 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 
 public class CoordinatorServer {
     private final ClusterConfig config;
@@ -45,6 +47,16 @@ public class CoordinatorServer {
         });
         server.createContext("/metadata", exchange -> HttpUtil.json(exchange, 200, metadataStore.shards()));
         server.createContext("/nodes", exchange -> HttpUtil.json(exchange, 200, metadataStore.liveNodes()));
+        server.createContext("/admin/health", exchange -> HttpUtil.json(exchange, 200, clusterHealth()));
+        server.createContext("/admin/rebalance", exchange -> {
+            List<ShardMetadata> updated = metadataStore.rebalance(metadataStore.liveNodes(), config.replicationFactor);
+            refreshAllLiveNodes();
+            HttpUtil.json(exchange, 200, updated);
+        });
+        server.createContext("/admin/snapshot", exchange -> {
+            List<NodeInfo> results = snapshotAllLiveNodes();
+            HttpUtil.json(exchange, 200, results);
+        });
         server.setExecutor(Executors.newFixedThreadPool(16));
         server.start();
         System.out.printf("Coordinator serving %s at %s:%d%n",
@@ -81,15 +93,23 @@ public class CoordinatorServer {
         int shardId = SqlUtils.hashToShard(shardKey, config.shardCount);
         ShardMetadata shard = metadataStore.shard(shardId);
         List<NodeInfo> liveNodes = metadataStore.liveNodes();
+        shard = metadataStore.electPrimary(shardId, liveNodes);
         List<NodeInfo> replicas = replicaChooser.chooseForWrite(shard.replicas, liveNodes);
         if (replicas.isEmpty()) {
             return SqlResponse.error("No live replica for shard " + shardId);
         }
         long shardLogIndex = metadataStore.nextShardLogIndex(shardId);
-        List<ExecuteResponse> responses = sendToReplicas(UUID.randomUUID().toString(), shardId, shardLogIndex, sql, replicas, false, 0);
-        boolean success = responses.stream().anyMatch(response -> response.ok);
-        return success ? SqlResponse.ok("write shard " + shardId + " replicas " + shard.replicas, responses)
-                : SqlResponse.error("All replicas failed for shard " + shardId);
+        String requestId = UUID.randomUUID().toString();
+        List<ExecuteResponse> responses = sendRaftStyle(requestId, shard, shardLogIndex, sql, replicas);
+        long successCount = responses.stream().filter(response -> response.ok).count();
+        int quorum = quorumSize(shard.replicas.size());
+        if (successCount >= quorum) {
+            metadataStore.updateCommitIndex(shardId, shardLogIndex);
+            return SqlResponse.ok("raft write shard " + shardId + " term " + shard.term
+                    + " commitIndex " + shardLogIndex, responses);
+        }
+        return SqlResponse.error("Raft quorum failed for shard " + shardId + ": "
+                + successCount + "/" + quorum + " acknowledgements");
     }
 
     private SqlResponse broadcastWrite(String sql) {
@@ -97,9 +117,11 @@ public class CoordinatorServer {
         if (liveNodes.isEmpty()) {
             return SqlResponse.error("No live nodes");
         }
-        List<ExecuteResponse> responses = sendToReplicas(UUID.randomUUID().toString(), -1, 0, sql, liveNodes, false, 0);
-        boolean success = responses.stream().anyMatch(response -> response.ok);
-        return success ? SqlResponse.ok("broadcast", responses) : SqlResponse.error("Broadcast failed on all nodes");
+        List<ExecuteResponse> responses = sendToReplicas(UUID.randomUUID().toString(), -1, 0, 0, sql, liveNodes, false, 0);
+        long successCount = responses.stream().filter(response -> response.ok).count();
+        int quorum = quorumSize(liveNodes.size());
+        return successCount >= quorum ? SqlResponse.ok("quorum broadcast", responses)
+                : SqlResponse.error("Broadcast quorum failed: " + successCount + "/" + quorum);
     }
 
     private SqlResponse distributedRead(String originalSql, String dispatchSql, String explicitShardKey) {
@@ -147,20 +169,80 @@ public class CoordinatorServer {
 
     private List<ExecuteResponse> sendToReplicas(String requestId, int shardId, long shardLogIndex, String sql,
                                                  List<NodeInfo> replicas, boolean replay, long walSequence) {
+        return sendToReplicas(requestId, shardId, shardLogIndex, 0, sql, replicas, replay, walSequence);
+    }
+
+    private List<ExecuteResponse> sendToReplicas(String requestId, int shardId, long shardLogIndex, long raftTerm,
+                                                 String sql, List<NodeInfo> replicas, boolean replay, long walSequence) {
         List<ExecuteResponse> responses = new ArrayList<>();
         for (NodeInfo node : replicas) {
-            responses.add(send(requestId, shardId, shardLogIndex, sql, node, replay, walSequence));
+            responses.add(send(requestId, shardId, shardLogIndex, raftTerm, sql, node, replay, walSequence));
+        }
+        return responses;
+    }
+
+    private List<ExecuteResponse> sendRaftStyle(String requestId, ShardMetadata shard, long shardLogIndex,
+                                                String sql, List<NodeInfo> replicas) {
+        Map<String, NodeInfo> byId = replicas.stream().collect(Collectors.toMap(node -> node.nodeId, node -> node));
+        List<ExecuteResponse> responses = new ArrayList<>();
+        NodeInfo primary = byId.get(shard.primary);
+        if (primary != null) {
+            responses.add(send(requestId, shard.shardId, shardLogIndex, shard.term, sql, primary, false, 0));
+        }
+        for (NodeInfo replica : replicas) {
+            if (!replica.nodeId.equals(shard.primary)) {
+                responses.add(send(requestId, shard.shardId, shardLogIndex, shard.term, sql, replica, true, 0));
+            }
         }
         return responses;
     }
 
     private ExecuteResponse send(String requestId, int shardId, long shardLogIndex, String sql, NodeInfo node,
                                  boolean replay, long walSequence) {
+        return send(requestId, shardId, shardLogIndex, 0, sql, node, replay, walSequence);
+    }
+
+    private ExecuteResponse send(String requestId, int shardId, long shardLogIndex, long raftTerm, String sql,
+                                 NodeInfo node, boolean replay, long walSequence) {
         try {
-            ExecuteRequest request = new ExecuteRequest(requestId, shardId, shardLogIndex, sql, walSequence, replay);
+            ExecuteRequest request = new ExecuteRequest(requestId, shardId, shardLogIndex, raftTerm, sql, walSequence, replay);
             return HttpUtil.postJson(node.baseUrl() + "/execute", request, ExecuteResponse.class);
         } catch (Exception e) {
             return ExecuteResponse.error(node.nodeId, e.getMessage());
         }
+    }
+
+    private int quorumSize(int replicaCount) {
+        return replicaCount / 2 + 1;
+    }
+
+    private List<NodeInfo> refreshAllLiveNodes() {
+        List<NodeInfo> results = new ArrayList<>();
+        for (NodeInfo node : metadataStore.liveNodes()) {
+            try {
+                results.add(HttpUtil.postJson(node.baseUrl() + "/admin/refresh-shards", Map.of(), NodeInfo.class));
+            } catch (Exception ignored) {
+            }
+        }
+        return results;
+    }
+
+    private List<NodeInfo> snapshotAllLiveNodes() {
+        List<NodeInfo> results = new ArrayList<>();
+        for (NodeInfo node : metadataStore.liveNodes()) {
+            try {
+                HttpUtil.postJson(node.baseUrl() + "/admin/snapshot", Map.of(), Object.class);
+                results.add(node);
+            } catch (Exception ignored) {
+            }
+        }
+        return results;
+    }
+
+    private Map<String, Object> clusterHealth() {
+        return Map.of(
+                "nodes", metadataStore.liveNodes(),
+                "shards", metadataStore.shards()
+        );
     }
 }

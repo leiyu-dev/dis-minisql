@@ -15,6 +15,7 @@ public class ClusterConfig {
     public int sessionTimeoutMs = 15000;
     public int shardCount = 3;
     public int replicationFactor = 2;
+    public String defaultDatabase = "dist";
     public String coordinatorHost = "0.0.0.0";
     public int coordinatorPort = 8080;
     public String minisqlBinary = "../minisql/build/bin/main";
