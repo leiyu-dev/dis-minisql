@@ -26,4 +26,12 @@ public final class ZkPaths {
     public String shard(int shardId) {
         return shards() + "/" + shardId;
     }
+
+    public String shardLogIndexes() {
+        return root + "/shard-log-indexes";
+    }
+
+    public String shardLogIndex(int shardId) {
+        return shardLogIndexes() + "/" + shardId;
+    }
 }

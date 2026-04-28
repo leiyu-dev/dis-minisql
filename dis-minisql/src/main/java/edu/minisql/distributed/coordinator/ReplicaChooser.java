@@ -14,6 +14,9 @@ public class ReplicaChooser {
 
     public NodeInfo chooseForRead(int shardId, List<String> replicaIds, List<NodeInfo> liveNodes) {
         List<NodeInfo> candidates = candidates(replicaIds, liveNodes);
+        candidates = candidates.stream()
+                .filter(node -> "SERVING".equalsIgnoreCase(node.replicaState))
+                .collect(Collectors.toList());
         if (candidates.isEmpty()) {
             throw new IllegalStateException("No live replica for shard " + shardId);
         }
@@ -22,7 +25,9 @@ public class ReplicaChooser {
     }
 
     public List<NodeInfo> chooseForWrite(List<String> replicaIds, List<NodeInfo> liveNodes) {
-        return candidates(replicaIds, liveNodes);
+        return candidates(replicaIds, liveNodes).stream()
+                .filter(node -> "SERVING".equalsIgnoreCase(node.replicaState))
+                .collect(Collectors.toList());
     }
 
     private List<NodeInfo> candidates(List<String> replicaIds, List<NodeInfo> liveNodes) {

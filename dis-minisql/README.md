@@ -5,9 +5,9 @@
 ## 架构
 
 - `CoordinatorServer`：中心协调节点，对外提供 `/sql`，负责选择分片键、哈希路由、写副本、读负载均衡和 scatter-gather 查询。
-- `DataNodeServer`：数据节点，对内提供 `/execute`、`/wal`、`/health`，写请求先追加本地 `wal.jsonl`，再调用 MiniSQL 执行。
+- `DataNodeServer`：数据节点，对内提供 `/execute`、`/wal`、`/health`，写请求先追加本地 `wal.jsonl`，再调用 MiniSQL batch 模式执行。
 - `ZkMetadataStore`：在 ZooKeeper 中维护 `/dis-minisql/nodes` 在线节点和 `/dis-minisql/shards` 分片副本表。
-- `MiniSqlCli`：以子进程方式调用 `../minisql/build/bin/main`。由于原 MiniSQL 不自动加载数据库，DataNode 会在执行前重放 WAL，从而支持节点宕机后的最终一致恢复。
+- `MiniSqlCli`：以子进程方式调用 `../minisql/build/bin/main --batch <sql-file>`。DataNode 会维护 snapshot 和 snapshot 后的 WAL 增量，恢复时只重放缺失增量。
 
 ## 构建
 
@@ -58,8 +58,22 @@ curl -X POST http://127.0.0.1:8080/sql \
   -d '{"sql":"select * from t;","shardKey":"1"}'
 ```
 
+Coordinator 会在响应的 `mergedOutput` 字段中返回解析后的合并结果。当前支持跨分片 `select` 合并、`order by`、`count/sum/min/max` 以及简化等值 join：
+
+```bash
+curl -X POST http://127.0.0.1:8080/sql \
+  -H 'Content-Type: application/json' \
+  -d '{"sql":"select count(*) from t;"}'
+
+curl -X POST http://127.0.0.1:8080/sql \
+  -H 'Content-Type: application/json' \
+  -d '{"sql":"select * from user join orders on user.id = orders.user_id;"}'
+```
+
 ## 容错说明
 
-ZooKeeper ephemeral node 用于在线节点发现。Coordinator 写入时会把请求发送到该分片当前在线的所有副本；一个副本宕机时，后续读写会自动避开它。DataNode 恢复启动后，会从共享分片的在线副本拉取 WAL 并追加缺失日志，然后之后的请求通过 WAL 重放恢复执行状态。
+ZooKeeper ephemeral node 用于在线节点发现。Coordinator 写入时会为每个分片写请求分配递增的 `shardLogIndex`，并把请求发送到该分片当前在线的所有 `SERVING` 副本；一个副本宕机时，后续读写会自动避开它。
+
+DataNode 恢复启动时先进入 `RECOVERING` 状态，从共享分片的在线副本拉取 WAL，按 `requestId` 去重并追加缺失日志，再应用 snapshot 之后的 WAL 增量。恢复完成后节点切换为 `SERVING`，才会被 Coordinator 选作读写副本。DataNode 会周期性复制 MiniSQL `databases/` 目录形成 snapshot，并压缩已包含进 snapshot 的 WAL。
 
 该实现选择最终一致性：只要每个分片仍有至少一个副本存活，系统可以继续服务；恢复节点会通过 WAL 追赶。由于原 MiniSQL 无事务和日志，本项目不实现分布式事务。

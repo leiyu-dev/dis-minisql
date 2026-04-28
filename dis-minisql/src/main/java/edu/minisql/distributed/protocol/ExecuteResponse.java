@@ -4,6 +4,7 @@ public class ExecuteResponse {
     public boolean ok;
     public String nodeId;
     public long walSequence;
+    public long shardLogIndex;
     public String output;
     public String error;
 

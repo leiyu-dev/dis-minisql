@@ -2,13 +2,12 @@ package edu.minisql.distributed.minisql;
 
 import edu.minisql.distributed.common.SqlUtils;
 
-import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -27,30 +26,27 @@ public class MiniSqlCli {
     public synchronized String execute(List<String> replaySql, String sql) {
         try {
             Files.createDirectories(workDir);
-            Process process = new ProcessBuilder(binary.toString())
+            List<String> statements = new ArrayList<>();
+            for (String replay : replaySql) {
+                statements.add(SqlUtils.normalize(replay));
+            }
+            if (sql != null && !sql.isBlank()) {
+                statements.add(SqlUtils.normalize(sql));
+            }
+            Path batchFile = Files.createTempFile(workDir, "minisql-batch-", ".sql");
+            Files.write(batchFile, statements, StandardCharsets.UTF_8);
+
+            Process process = new ProcessBuilder(binary.toString(), "--batch", batchFile.toString())
                     .directory(workDir.toFile())
                     .redirectErrorStream(true)
                     .start();
-            try (BufferedWriter writer = new BufferedWriter(
-                    new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8))) {
-                for (String replay : replaySql) {
-                    writer.write(SqlUtils.normalize(replay));
-                    writer.newLine();
-                }
-                if (sql != null && !sql.isBlank()) {
-                    writer.write(SqlUtils.normalize(sql));
-                    writer.newLine();
-                }
-                writer.write("quit;");
-                writer.newLine();
-            }
-
             boolean finished = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
             if (!finished) {
                 process.destroyForcibly();
                 throw new IllegalStateException("MiniSQL execution timed out after " + timeout);
             }
             String output = readAll(process.getInputStream());
+            Files.deleteIfExists(batchFile);
             if (process.exitValue() != 0) {
                 throw new IllegalStateException("MiniSQL exited with code " + process.exitValue() + "\n" + output);
             }

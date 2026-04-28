@@ -18,7 +18,9 @@
 #include "utils/utils.h"
 #include "common/config.h"
 
-#define CREATE_NEW_FILE
+// Load existing database files when MiniSQL is used as a DataNode backend.
+// New databases are still created explicitly through CREATE DATABASE.
+// #define CREATE_NEW_FILE
 
 
 ExecuteEngine::ExecuteEngine() {

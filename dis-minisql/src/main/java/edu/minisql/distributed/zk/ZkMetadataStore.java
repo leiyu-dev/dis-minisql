@@ -36,6 +36,7 @@ public class ZkMetadataStore implements Closeable {
             ensurePersistent(paths.root());
             ensurePersistent(paths.nodes());
             ensurePersistent(paths.shards());
+            ensurePersistent(paths.shardLogIndexes());
         } catch (Exception e) {
             throw new IllegalStateException("Failed to connect ZooKeeper", e);
         }
@@ -56,6 +57,28 @@ public class ZkMetadataStore implements Closeable {
             }
             ShardMetadata metadata = new ShardMetadata(shardId, replicas, replicas.get(0));
             upsertPersistent(paths.shard(shardId), Jsons.bytes(metadata));
+            upsertPersistentIfAbsent(paths.shardLogIndex(shardId), "0".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+    }
+
+    public long nextShardLogIndex(int shardId) {
+        if (shardId < 0) {
+            return 0L;
+        }
+        String path = paths.shardLogIndex(shardId);
+        while (true) {
+            try {
+                Stat stat = new Stat();
+                byte[] current = zk.getData(path, false, stat);
+                long next = Long.parseLong(new String(current, java.nio.charset.StandardCharsets.UTF_8)) + 1;
+                zk.setData(path, Long.toString(next).getBytes(java.nio.charset.StandardCharsets.UTF_8), stat.getVersion());
+                return next;
+            } catch (KeeperException.BadVersionException ignored) {
+            } catch (KeeperException.NoNodeException e) {
+                upsertPersistentIfAbsent(path, "0".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            } catch (Exception e) {
+                throw new IllegalStateException("Failed to allocate shard log index for shard " + shardId, e);
+            }
         }
     }
 
@@ -130,6 +153,17 @@ public class ZkMetadataStore implements Closeable {
             } else {
                 zk.setData(path, data, stat.getVersion());
             }
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to write " + path, e);
+        }
+    }
+
+    private void upsertPersistentIfAbsent(String path, byte[] data) {
+        try {
+            if (zk.exists(path, false) == null) {
+                zk.create(path, data, ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
+            }
+        } catch (KeeperException.NodeExistsException ignored) {
         } catch (Exception e) {
             throw new IllegalStateException("Failed to write " + path, e);
         }

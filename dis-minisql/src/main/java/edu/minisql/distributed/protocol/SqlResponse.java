@@ -7,6 +7,7 @@ public class SqlResponse {
     public boolean ok;
     public String route;
     public List<ExecuteResponse> responses = new ArrayList<>();
+    public String mergedOutput;
     public String error;
 
     public static SqlResponse ok(String route, List<ExecuteResponse> responses) {
@@ -14,6 +15,12 @@ public class SqlResponse {
         response.ok = true;
         response.route = route;
         response.responses = responses;
+        return response;
+    }
+
+    public static SqlResponse ok(String route, List<ExecuteResponse> responses, String mergedOutput) {
+        SqlResponse response = ok(route, responses);
+        response.mergedOutput = mergedOutput;
         return response;
     }
 
