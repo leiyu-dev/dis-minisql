@@ -6,7 +6,6 @@ import signal
 import socket
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -19,6 +18,7 @@ JAR = JAVA_DIR / "target" / "dis-minisql-1.0.0.jar"
 MINISQL = ROOT / "minisql" / "build" / "bin" / "main"
 ZK_DIR = ROOT / "apache-zookeeper-3.9.5-bin"
 COORD_PORT = 18080
+RUNTIME_DIR = Path(os.environ.get("DIS_MINISQL_E2E_RUNTIME", str(ROOT / "tmp"))).expanduser().resolve()
 
 
 def wait_for_port(port, timeout=20):
@@ -106,7 +106,10 @@ def main():
     assert_true(MINISQL.exists(), "MiniSQL binary exists")
     assert_true((ZK_DIR / "bin" / "zkServer.sh").exists(), "ZooKeeper distribution exists")
 
-    runtime = Path(tempfile.mkdtemp(prefix="dis-minisql-e2e-"))
+    runtime = RUNTIME_DIR
+    if runtime.exists():
+        shutil.rmtree(runtime)
+    runtime.mkdir(parents=True)
     print(f"[INFO] runtime: {runtime}")
     processes = []
     try:
@@ -205,8 +208,7 @@ def main():
     finally:
         for process in reversed(processes):
             stop_process(process)
-        if os.environ.get("DIS_MINISQL_KEEP_E2E") != "1":
-            shutil.rmtree(runtime, ignore_errors=True)
+        print(f"[INFO] runtime kept for logs: {runtime}")
 
 
 if __name__ == "__main__":
