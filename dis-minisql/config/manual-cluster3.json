@@ -1,0 +1,31 @@
+{
+  "clusterName": "dis-minisql-manual-e2e",
+  "zkConnect": "127.0.0.1:12181",
+  "sessionTimeoutMs": 8000,
+  "shardCount": 3,
+  "replicationFactor": 3,
+  "defaultDatabase": "dist",
+  "coordinatorHost": "127.0.0.1",
+  "coordinatorPort": 18080,
+  "minisqlBinary": "minisql/build/bin/main",
+  "nodes": [
+    {
+      "nodeId": "node-a",
+      "host": "127.0.0.1",
+      "port": 19001,
+      "dataDir": "tmp/node-a"
+    },
+    {
+      "nodeId": "node-b",
+      "host": "127.0.0.1",
+      "port": 19002,
+      "dataDir": "tmp/node-b"
+    },
+    {
+      "nodeId": "node-c",
+      "host": "127.0.0.1",
+      "port": 19003,
+      "dataDir": "tmp/node-c"
+    }
+  ]
+}
