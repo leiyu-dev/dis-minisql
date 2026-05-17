@@ -30,52 +30,58 @@ mvn package
 
 ## 单机三节点演示
 
-复制示例配置后按需修改真实机器 IP：
+仓库根目录提供一键入口：
 
 ```bash
-cp src/main/resources/cluster.example.json cluster.json
-./scripts/start-zookeeper.sh
-java -jar target/dis-minisql-1.0.0.jar init-zk cluster.json
-./scripts/start-node.sh cluster.json node-a
-./scripts/start-node.sh cluster.json node-b
-./scripts/start-node.sh cluster.json node-c
-./scripts/start-coordinator.sh cluster.json
+cd /home/ly527609/homework/dis-minisql
+./run.sh
 ```
 
-提交 SQL：
+`run.sh` 会构建 MiniSQL 和 Java 分布式层，启动 ZooKeeper、初始化分片元数据、启动三个 DataNode，后台启动 Coordinator，再以前台模式启动 client 交互 CLI。退出 client（`quit`/`exit`、Ctrl+C 或 stdin EOF）不会停止后台系统；需要关闭整套系统时运行 `./stop-system.sh`。
+
+也可以手动连接已运行的后台 Coordinator：
 
 ```bash
-curl -X POST http://127.0.0.1:8080/sql \
-  -H 'Content-Type: application/json' \
-  -d '{"sql":"insert into t values (1, '\''alice'\'');"}'
+java -jar dis-minisql/target/dis-minisql-1.0.0.jar client ./config/cluster3.json
 ```
 
-读请求如果传入 `shardKey`，只访问对应分片的一个在线副本；不传则访问每个分片的一个副本并返回多个结果：
+CLI 支持直接输入 SQL，每次输入执行一条语句：
 
-```bash
-curl -X POST http://127.0.0.1:8080/sql \
-  -H 'Content-Type: application/json' \
-  -d '{"sql":"select * from t;","shardKey":"1"}'
+```text
+dis-minisql> create database dist;
+dis-minisql> create table t (id int unique, age int, primary key(id));
+dis-minisql> insert into t values (1, 10);
+dis-minisql> select count(*) from t;
 ```
 
-Coordinator 会在响应的 `mergedOutput` 字段中返回解析后的合并结果。当前支持跨分片 `select` 合并、`order by`、`count/sum/min/max` 以及简化等值 join：
+读请求如果需要指定分片键，可以使用：
 
-```bash
-curl -X POST http://127.0.0.1:8080/sql \
-  -H 'Content-Type: application/json' \
-  -d '{"sql":"select count(*) from t;"}'
+```text
+dis-minisql> shard 1 select * from t;
+```
 
-curl -X POST http://127.0.0.1:8080/sql \
-  -H 'Content-Type: application/json' \
-  -d '{"sql":"select * from user join orders on user.id = orders.user_id;"}'
+Coordinator 会优先显示 `mergedOutput` 中的合并结果。当前支持跨分片 `select` 合并、`order by`、`count/sum/min/max` 以及简化等值 join。
+
+CLI 运维命令：
+
+```text
+help
+nodes
+metadata
+health
+rebalance
+snapshot
+quit
 ```
 
 ## 运维接口
 
+交互 CLI 已覆盖常用运维能力；HTTP API 仍保留，便于脚本或自动化测试直接调用：
+
 ```bash
-curl http://127.0.0.1:8080/admin/health
-curl -X POST http://127.0.0.1:8080/admin/rebalance
-curl -X POST http://127.0.0.1:8080/admin/snapshot
+curl http://127.0.0.1:18080/admin/health
+curl -X POST http://127.0.0.1:18080/admin/rebalance
+curl -X POST http://127.0.0.1:18080/admin/snapshot
 ```
 
 - `/admin/health` 返回在线节点、分片、副本、primary、term 和 commitIndex。

@@ -19,14 +19,17 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
-public class CoordinatorServer {
+public class CoordinatorServer implements AutoCloseable {
     private final ClusterConfig config;
     private final ZkMetadataStore metadataStore;
     private final ReplicaChooser replicaChooser = new ReplicaChooser();
     private final QueryPostProcessor queryPostProcessor = new QueryPostProcessor();
+    private HttpServer server;
+    private ExecutorService executor;
 
     public CoordinatorServer(ClusterConfig config) {
         this.config = config;
@@ -34,8 +37,11 @@ public class CoordinatorServer {
         this.metadataStore.initializeShards(config);
     }
 
-    public void start() throws IOException {
-        HttpServer server = HttpServer.create(new InetSocketAddress(config.coordinatorHost, config.coordinatorPort), 0);
+    public synchronized void start() throws IOException {
+        if (server != null) {
+            throw new IllegalStateException("Coordinator already started");
+        }
+        server = HttpServer.create(new InetSocketAddress(config.coordinatorHost, config.coordinatorPort), 0);
         server.createContext("/sql", exchange -> {
             try {
                 SqlRequest request = Jsons.parse(HttpUtil.body(exchange), SqlRequest.class);
@@ -45,22 +51,45 @@ public class CoordinatorServer {
                 HttpUtil.json(exchange, 500, SqlResponse.error(e.getMessage()));
             }
         });
-        server.createContext("/metadata", exchange -> HttpUtil.json(exchange, 200, metadataStore.shards()));
-        server.createContext("/nodes", exchange -> HttpUtil.json(exchange, 200, metadataStore.liveNodes()));
-        server.createContext("/admin/health", exchange -> HttpUtil.json(exchange, 200, clusterHealth()));
+        server.createContext("/metadata", exchange -> HttpUtil.json(exchange, 200, metadata()));
+        server.createContext("/nodes", exchange -> HttpUtil.json(exchange, 200, nodes()));
+        server.createContext("/admin/health", exchange -> HttpUtil.json(exchange, 200, health()));
         server.createContext("/admin/rebalance", exchange -> {
-            List<ShardMetadata> updated = metadataStore.rebalance(metadataStore.liveNodes(), config.replicationFactor);
-            refreshAllLiveNodes();
-            HttpUtil.json(exchange, 200, updated);
+            HttpUtil.json(exchange, 200, rebalance());
         });
         server.createContext("/admin/snapshot", exchange -> {
-            List<NodeInfo> results = snapshotAllLiveNodes();
-            HttpUtil.json(exchange, 200, results);
+            HttpUtil.json(exchange, 200, snapshot());
         });
-        server.setExecutor(Executors.newFixedThreadPool(16));
+        executor = Executors.newFixedThreadPool(16);
+        server.setExecutor(executor);
         server.start();
         System.out.printf("Coordinator serving %s at %s:%d%n",
                 config.clusterName, config.coordinatorHost, config.coordinatorPort);
+    }
+
+    public List<ShardMetadata> metadata() {
+        return metadataStore.shards();
+    }
+
+    public List<NodeInfo> nodes() {
+        return metadataStore.liveNodes();
+    }
+
+    public Map<String, Object> health() {
+        return Map.of(
+                "nodes", nodes(),
+                "shards", metadata()
+        );
+    }
+
+    public List<ShardMetadata> rebalance() {
+        List<ShardMetadata> updated = metadataStore.rebalance(metadataStore.liveNodes(), config.replicationFactor);
+        refreshAllLiveNodes();
+        return updated;
+    }
+
+    public List<NodeInfo> snapshot() {
+        return snapshotAllLiveNodes();
     }
 
     public SqlResponse execute(SqlRequest request) {
@@ -239,10 +268,20 @@ public class CoordinatorServer {
         return results;
     }
 
-    private Map<String, Object> clusterHealth() {
-        return Map.of(
-                "nodes", metadataStore.liveNodes(),
-                "shards", metadataStore.shards()
-        );
+    public synchronized void stop() {
+        if (server != null) {
+            server.stop(0);
+            server = null;
+        }
+        if (executor != null) {
+            executor.shutdownNow();
+            executor = null;
+        }
+    }
+
+    @Override
+    public synchronized void close() throws IOException {
+        stop();
+        metadataStore.close();
     }
 }

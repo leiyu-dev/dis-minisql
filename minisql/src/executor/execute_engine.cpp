@@ -34,7 +34,7 @@ ExecuteEngine::ExecuteEngine() {
    *  the test, run it using main.cpp and uncomment
    *  this part of the code.**/
 #ifndef CREATE_NEW_FILE
-  LOG(INFO)<<"Do not use new file"<<endl;
+  // LOG(INFO)<<"Do not use new file"<<endl;
   struct dirent *stdir;
   while((stdir = readdir(dir)) != nullptr) {
     if( strcmp( stdir->d_name , "." ) == 0 ||

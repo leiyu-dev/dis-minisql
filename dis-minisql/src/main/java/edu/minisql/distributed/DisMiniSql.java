@@ -1,6 +1,7 @@
 package edu.minisql.distributed;
 
 import edu.minisql.distributed.config.ClusterConfig;
+import edu.minisql.distributed.coordinator.CoordinatorCli;
 import edu.minisql.distributed.coordinator.CoordinatorServer;
 import edu.minisql.distributed.datanode.DataNodeServer;
 import edu.minisql.distributed.zk.ZkMetadataStore;
@@ -18,6 +19,9 @@ public class DisMiniSql {
         switch (role) {
             case "coordinator":
                 new CoordinatorServer(config).start();
+                break;
+            case "client":
+                new CoordinatorCli(config).run();
                 break;
             case "datanode":
                 if (args.length < 3) {
@@ -40,6 +44,7 @@ public class DisMiniSql {
         System.out.println("Usage:\n"
                 + "  java -jar target/dis-minisql-1.0.0.jar init-zk <config.json>\n"
                 + "  java -jar target/dis-minisql-1.0.0.jar coordinator <config.json>\n"
+                + "  java -jar target/dis-minisql-1.0.0.jar client <config.json>\n"
                 + "  java -jar target/dis-minisql-1.0.0.jar datanode <config.json> <nodeId>\n");
     }
 }
